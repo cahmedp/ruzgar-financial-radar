@@ -11,7 +11,7 @@ st.markdown("**متابعة متقدمة لأسهم المعادن الحرجة 
 
 stocks = [
     'CRML', 'AREC', 'UAMY', 'UUUU', 'TMC', 'NB', 'TMQ', 'IDR', 'PPTA', 'MP', 'ERO',
-    'LAC', 'LICY', 'SGML', 'ABAT'
+    'LAC', 'ZENA', 'SGML', 'ABAT'
 ]
 
 @st.cache_data(ttl=300)
