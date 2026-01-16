@@ -3,18 +3,24 @@ import yfinance as yf
 import pandas as pd
 import plotly.express as px
 from datetime import datetime
+import requests
 
 st.set_page_config(page_title="RUZGAR Financial Radar", page_icon="📈", layout="wide")
 
+# عنوان التطبيق
 st.title("📊 RUZGAR Financial Radar - Critical Minerals & Penny Stocks")
 st.markdown("**متابعة متقدمة لأسهم المعادن الحرجة و Penny Stocks** | يناير 2026")
 
+# قائمة الأسهم (أضفت ZENA كما في الجدول السابق)
 stocks = [
     'CRML', 'AREC', 'UAMY', 'UUUU', 'TMC', 'NB', 'TMQ', 'IDR', 'PPTA', 'MP', 'ERO',
     'LAC', 'ZENA', 'SGML', 'ABAT'
 ]
 
-@st.cache_data(ttl=300)
+# مفتاح Alpha Vantage (يمكن نقله لـ st.secrets لاحقًا)
+API_KEY = "U2X2WAT360XR627R"
+
+@st.cache_data(ttl=300)  # كاش لمدة 5 دقائق
 def get_stock_data(symbol):
     try:
         ticker = yf.Ticker(symbol)
@@ -47,6 +53,16 @@ def get_stock_data(symbol):
         except:
             pass
         
+        # عدد الأخبار الحديثة من Alpha Vantage
+        news_count = 0
+        try:
+            news_url = f"https://www.alphavantage.co/query?function=NEWS_SENTIMENT&tickers={symbol}&apikey={API_KEY}"
+            news_response = requests.get(news_url, timeout=10)
+            news_data = news_response.json()
+            news_count = len(news_data.get('feed', []))
+        except:
+            pass
+        
         return {
             'Symbol': symbol,
             'Price': current,
@@ -61,11 +77,13 @@ def get_stock_data(symbol):
             'Sector': info.get('sector', 'غير متوفر'),
             'Float (M)': info.get('floatShares', 0) / 1e6 if info.get('floatShares') else float('nan'),
             'Short %': info.get('shortPercentOfFloat', 0) * 100 if info.get('shortPercentOfFloat') else float('nan'),
+            'News Count': news_count
         }
     except Exception as e:
         st.warning(f"خطأ في {symbol}: {str(e)}")
         return None
 
+# جمع البيانات
 data = []
 progress_bar = st.progress(0)
 status_text = st.empty()
@@ -81,18 +99,37 @@ for i, symbol in enumerate(stocks):
 progress_bar.empty()
 status_text.success("تم تحميل البيانات بنجاح!")
 
+# زر التحديث اليدوي
+if st.button("🔄 تحديث البيانات الآن"):
+    st.cache_data.clear()
+    st.rerun()
+
 if data:
     df = pd.DataFrame(data).sort_values('Change %', ascending=False)
     
-    # تحويل الأعمدة الرقمية لتجنب مشاكل التنسيق
+    # تحويل الأعمدة الرقمية
     numeric_cols = ['Price', 'Change %', 'Rel Volume', 'Volume', 'Avg Vol', 'Market Cap (M)', 'Beta',
-                    '% from 52W High', 'RSI (14)', 'Float (M)', 'Short %']
+                    '% from 52W High', 'RSI (14)', 'Float (M)', 'Short %', 'News Count']
     for col in numeric_cols:
         if col in df.columns:
             df[col] = pd.to_numeric(df[col], errors='coerce')
     
-    # تنسيق بسيط بدون gradient على أعمدة قد تكون NaN
-    styled_df = df.style.format(na_rep='N/A').format({
+    # فلتر تفاعلي
+    st.subheader("فلتر الجدول")
+    col1, col2, col3 = st.columns(3)
+    
+    min_change = col1.slider("أدنى تغيير %", -2000.0, 2000.0, -100.0, step=50.0)
+    min_rsi = col2.slider("أدنى RSI", 0.0, 100.0, 30.0, step=5.0)
+    min_news = col3.slider("أدنى عدد أخبار", 0, 20, 0)
+    
+    filtered_df = df[
+        (df['Change %'] >= min_change) &
+        (df['RSI (14)'].fillna(0) >= min_rsi) &
+        (df['News Count'].fillna(0) >= min_news)
+    ]
+    
+    # تنسيق الجدول
+    styled_df = filtered_df.style.format(na_rep='N/A').format({
         'Price': '{:.2f}',
         'Change %': '{:+.2f}%',
         'Rel Volume': '{:.2f}x',
@@ -102,35 +139,25 @@ if data:
         'Beta': '{:.2f}',
         '% from 52W High': '{:.1f}%',
         'RSI (14)': '{:.1f}',
-        'Short %': '{:.2f}%'
+        'Short %': '{:.2f}%',
+        'News Count': '{:.0f}'
     })
     
     st.subheader("جدول المتابعة المتقدم")
-    # عرض الجدول بدون height أولاً لتجنب الخطأ
     st.dataframe(styled_df, use_container_width=True)
     
-    # إضافة gradient بعد العرض الأساسي (اختياري)
-    try:
-        st.markdown("**تدرج الألوان للتغيير والـ RSI**")
-        st.dataframe(
-            df.style.background_gradient(subset=['Change %'], cmap='RdYlGn')
-                    .background_gradient(subset=['RSI (14)'], cmap='RdYlGn', vmin=30, vmax=70),
-            use_container_width=True
-        )
-    except:
-        st.info("التدرج اللوني غير متاح حاليًا بسبب بعض القيم الفارغة.")
-    
+    # الرسوم البيانية
     col1, col2 = st.columns(2)
     
     with col1:
-        fig_change = px.bar(df, x='Symbol', y='Change %', color='Change %',
+        fig_change = px.bar(filtered_df, x='Symbol', y='Change %', color='Change %',
                            color_continuous_scale='RdYlGn',
                            title='تغيير الأسعار اليومي (%)')
         fig_change.update_layout(xaxis_tickangle=-45)
         st.plotly_chart(fig_change, use_container_width=True)
     
     with col2:
-        fig_rsi = px.bar(df, x='Symbol', y='RSI (14)', color='RSI (14)',
+        fig_rsi = px.bar(filtered_df, x='Symbol', y='RSI (14)', color='RSI (14)',
                          color_continuous_scale='RdYlGn',
                          title='مؤشر القوة النسبية RSI (14)')
         fig_rsi.add_hline(y=70, line_dash="dash", line_color="red", annotation_text="Overbought")
@@ -138,9 +165,9 @@ if data:
         fig_rsi.update_layout(xaxis_tickangle=-45)
         st.plotly_chart(fig_rsi, use_container_width=True)
     
-    st.success(f"آخر تحديث: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} | الأسهم الناجحة: {len(df)}")
+    st.success(f"آخر تحديث: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} | الأسهم المعروضة: {len(filtered_df)} من {len(df)}")
     
-    st.info("ملاحظة: بعض الأسهم قد تظهر N/A بسبب عدم توفر البيانات من yfinance.")
+    st.info("ملاحظة: بعض الأسهم قد تظهر N/A بسبب عدم توفر البيانات. استخدم الفلتر للتركيز على النتائج الأفضل.")
 else:
     st.error("تعذر جلب أي بيانات. تحقق من الاتصال أو الرموز.")
 
