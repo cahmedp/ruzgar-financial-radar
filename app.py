@@ -14,13 +14,13 @@ stocks = [
     'LAC', 'LICY', 'SGML', 'ABAT'
 ]
 
-@st.cache_data(ttl=300)  # تخزين مؤقت 5 دقائق
+@st.cache_data(ttl=300)
 def get_stock_data(symbol):
     try:
         ticker = yf.Ticker(symbol)
         info = ticker.info
         
-        current = info.get('regularMarketPrice', info.get('currentPrice', 0))
+        current = info.get('regularMarketPrice', info.get('currentPrice', 0)) or 0
         volume = info.get('volume') or info.get('regularMarketVolume') or 0
         
         if volume == 0:
@@ -31,7 +31,7 @@ def get_stock_data(symbol):
         avg_volume = info.get('averageVolume') or 1
         rel_volume = volume / avg_volume if avg_volume > 0 else float('nan')
         
-        high52 = info.get('fiftyTwoWeekHigh', current)
+        high52 = info.get('fiftyTwoWeekHigh', current) or current
         perc_from_high = (current / high52 * 100) if high52 > 0 else float('nan')
         
         rsi = float('nan')
@@ -84,15 +84,15 @@ status_text.success("تم تحميل البيانات بنجاح!")
 if data:
     df = pd.DataFrame(data).sort_values('Change %', ascending=False)
     
-    # تحويل الأعمدة الرقمية إلى float بشكل صريح لتجنب مشكلة str
+    # تحويل الأعمدة الرقمية لتجنب مشاكل التنسيق
     numeric_cols = ['Price', 'Change %', 'Rel Volume', 'Volume', 'Avg Vol', 'Market Cap (M)', 'Beta',
                     '% from 52W High', 'RSI (14)', 'Float (M)', 'Short %']
     for col in numeric_cols:
         if col in df.columns:
             df[col] = pd.to_numeric(df[col], errors='coerce')
     
-    # تنسيق الجدول
-    styled_df = df.style.format({
+    # تنسيق بسيط بدون gradient على أعمدة قد تكون NaN
+    styled_df = df.style.format(na_rep='N/A').format({
         'Price': '{:.2f}',
         'Change %': '{:+.2f}%',
         'Rel Volume': '{:.2f}x',
@@ -103,16 +103,22 @@ if data:
         '% from 52W High': '{:.1f}%',
         'RSI (14)': '{:.1f}',
         'Short %': '{:.2f}%'
-    }, na_rep='N/A').background_gradient(
-        subset=['Change %'], cmap='RdYlGn'
-    ).background_gradient(
-        subset=['RSI (14)'], cmap='RdYlGn', vmin=30, vmax=70
-    ).background_gradient(
-        subset=['% from 52W High'], cmap='YlGn_r', vmin=0, vmax=100
-    )
+    })
     
     st.subheader("جدول المتابعة المتقدم")
-    st.dataframe(styled_df, use_container_width=True, height=650)
+    # عرض الجدول بدون height أولاً لتجنب الخطأ
+    st.dataframe(styled_df, use_container_width=True)
+    
+    # إضافة gradient بعد العرض الأساسي (اختياري)
+    try:
+        st.markdown("**تدرج الألوان للتغيير والـ RSI**")
+        st.dataframe(
+            df.style.background_gradient(subset=['Change %'], cmap='RdYlGn')
+                    .background_gradient(subset=['RSI (14)'], cmap='RdYlGn', vmin=30, vmax=70),
+            use_container_width=True
+        )
+    except:
+        st.info("التدرج اللوني غير متاح حاليًا بسبب بعض القيم الفارغة.")
     
     col1, col2 = st.columns(2)
     
@@ -134,7 +140,7 @@ if data:
     
     st.success(f"آخر تحديث: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} | الأسهم الناجحة: {len(df)}")
     
-    st.info("ملاحظة: بعض الأسهم قد تظهر N/A بسبب قيود yfinance أو عدم توفر البيانات.")
+    st.info("ملاحظة: بعض الأسهم قد تظهر N/A بسبب عدم توفر البيانات من yfinance.")
 else:
     st.error("تعذر جلب أي بيانات. تحقق من الاتصال أو الرموز.")
 
