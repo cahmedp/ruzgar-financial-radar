@@ -14,7 +14,7 @@ stocks = [
     'LAC', 'LICY', 'SGML', 'ABAT'
 ]
 
-@st.cache_data(ttl=300)  # تخزين مؤقت لمدة 5 دقائق
+@st.cache_data(ttl=300)  # تخزين مؤقت 5 دقائق
 def get_stock_data(symbol):
     try:
         ticker = yf.Ticker(symbol)
@@ -29,35 +29,38 @@ def get_stock_data(symbol):
                 volume = hist_today['Volume'].iloc[-1]
         
         avg_volume = info.get('averageVolume') or 1
-        rel_volume = round(volume / avg_volume, 2) if avg_volume > 0 else 'N/A'
+        rel_volume = volume / avg_volume if avg_volume > 0 else float('nan')
         
         high52 = info.get('fiftyTwoWeekHigh', current)
-        perc_from_high = round((current / high52 * 100), 1) if high52 > 0 else 'N/A'
+        perc_from_high = (current / high52 * 100) if high52 > 0 else float('nan')
         
-        rsi = 'N/A'
-        hist = ticker.history(period="1mo")
-        if not hist.empty:
-            delta = hist['Close'].diff()
-            gain = delta.where(delta > 0, 0).rolling(window=14).mean()
-            loss = -delta.where(delta < 0, 0).rolling(window=14).mean()
-            rs = gain / loss
-            rsi_val = 100 - (100 / (1 + rs.iloc[-1])) if rs.iloc[-1] != 0 else 50
-            rsi = round(rsi_val, 1)
+        rsi = float('nan')
+        try:
+            hist = ticker.history(period="1mo")
+            if not hist.empty:
+                delta = hist['Close'].diff()
+                gain = delta.where(delta > 0, 0).rolling(window=14).mean()
+                loss = -delta.where(delta < 0, 0).rolling(window=14).mean()
+                rs = gain / loss
+                rsi_val = 100 - (100 / (1 + rs.iloc[-1])) if rs.iloc[-1] != 0 else 50
+                rsi = rsi_val
+        except:
+            pass
         
         return {
             'Symbol': symbol,
-            'Price': round(current, 2),
-            'Change %': round(info.get('regularMarketChangePercent', 0) * 100, 2),
+            'Price': current,
+            'Change %': info.get('regularMarketChangePercent', 0) * 100,
             'Rel Volume': rel_volume,
             'Volume': volume,
             'Avg Vol': avg_volume,
-            'Market Cap (M)': round(info.get('marketCap', 0) / 1e6, 1) if info.get('marketCap') else 'N/A',
-            'Beta': round(info.get('beta', 'N/A'), 2),
+            'Market Cap (M)': info.get('marketCap', 0) / 1e6 if info.get('marketCap') else float('nan'),
+            'Beta': info.get('beta', float('nan')),
             '% from 52W High': perc_from_high,
             'RSI (14)': rsi,
             'Sector': info.get('sector', 'غير متوفر'),
-            'Float (M)': round(info.get('floatShares', 0) / 1e6, 2) if info.get('floatShares') else 'N/A',
-            'Short %': round(info.get('shortPercentOfFloat', 0) * 100, 2) if info.get('shortPercentOfFloat') else 'N/A',
+            'Float (M)': info.get('floatShares', 0) / 1e6 if info.get('floatShares') else float('nan'),
+            'Short %': info.get('shortPercentOfFloat', 0) * 100 if info.get('shortPercentOfFloat') else float('nan'),
         }
     except Exception as e:
         st.warning(f"خطأ في {symbol}: {str(e)}")
@@ -81,20 +84,32 @@ status_text.success("تم تحميل البيانات بنجاح!")
 if data:
     df = pd.DataFrame(data).sort_values('Change %', ascending=False)
     
+    # تحويل الأعمدة الرقمية إلى float بشكل صريح لتجنب مشكلة str
+    numeric_cols = ['Price', 'Change %', 'Rel Volume', 'Volume', 'Avg Vol', 'Market Cap (M)', 'Beta',
+                    '% from 52W High', 'RSI (14)', 'Float (M)', 'Short %']
+    for col in numeric_cols:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors='coerce')
+    
+    # تنسيق الجدول
     styled_df = df.style.format({
         'Price': '{:.2f}',
         'Change %': '{:+.2f}%',
-        'Rel Volume': '{:.2f}x' if isinstance(df['Rel Volume'].iloc[0], (int, float)) else '{}',
-        'Volume': '{:,}',
-        'Avg Vol': '{:,}',
+        'Rel Volume': '{:.2f}x',
+        'Volume': '{:,.0f}',
+        'Avg Vol': '{:,.0f}',
         'Market Cap (M)': '{:,.1f} M',
         'Beta': '{:.2f}',
         '% from 52W High': '{:.1f}%',
-        'RSI (14)': '{:.1f}' if pd.notna(df['RSI (14)'].iloc[0]) else 'N/A',
+        'RSI (14)': '{:.1f}',
         'Short %': '{:.2f}%'
-    }).background_gradient(subset=['Change %'], cmap='RdYlGn') \
-      .background_gradient(subset=['RSI (14)'], cmap='RdYlGn', vmin=30, vmax=70) \
-      .background_gradient(subset=['% from 52W High'], cmap='YlGn_r', vmin=0, vmax=100)
+    }, na_rep='N/A').background_gradient(
+        subset=['Change %'], cmap='RdYlGn'
+    ).background_gradient(
+        subset=['RSI (14)'], cmap='RdYlGn', vmin=30, vmax=70
+    ).background_gradient(
+        subset=['% from 52W High'], cmap='YlGn_r', vmin=0, vmax=100
+    )
     
     st.subheader("جدول المتابعة المتقدم")
     st.dataframe(styled_df, use_container_width=True, height=650)
@@ -119,7 +134,7 @@ if data:
     
     st.success(f"آخر تحديث: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} | الأسهم الناجحة: {len(df)}")
     
-    st.info("ملاحظة: Relative Volume قد يظهر N/A بسبب قيود yfinance. استخدم مصادر متعددة للتحقق.")
+    st.info("ملاحظة: بعض الأسهم قد تظهر N/A بسبب قيود yfinance أو عدم توفر البيانات.")
 else:
     st.error("تعذر جلب أي بيانات. تحقق من الاتصال أو الرموز.")
 
