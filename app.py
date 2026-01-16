@@ -1,13 +1,16 @@
 import streamlit as st
-import yfinance as yf
 import pandas as pd
 import plotly.express as px
 from datetime import datetime
+import requests
+import json
 
 st.set_page_config(page_title="RUZGAR Financial Radar", page_icon="📈", layout="wide")
 
 st.title("📊 RUZGAR Financial Radar - Critical Minerals & Penny Stocks")
 st.markdown("**متابعة متقدمة لأسهم المعادن الحرجة و Penny Stocks** | يناير 2026")
+
+API_KEY = "U2X2WAT360XR627R"  # API key for Alpha Vantage
 
 stocks = [
     'CRML', 'AREC', 'UAMY', 'UUUU', 'TMC', 'NB', 'TMQ', 'IDR', 'PPTA', 'MP', 'ERO',
@@ -18,77 +21,94 @@ data = []
 progress_bar = st.progress(0)
 status_text = st.empty()
 
-for i, symbol in enumerate(stocks):
+def get_alpha_vantage_data(symbol):
     try:
-        ticker = yf.Ticker(symbol)
-        info = ticker.info
+        # Fetch daily time series for price, change, volume
+        url_daily = f"https://www.alphavantage.co/query?function=TIME_SERIES_DAILY&symbol={symbol}&apikey={API_KEY}"
+        response_daily = requests.get(url_daily)
+        data_daily = response_daily.json()
         
-        # السعر الحالي
-        current = info.get('regularMarketPrice', info.get('currentPrice', 0))
+        if "Time Series (Daily)" not in data_daily:
+            raise ValueError("No daily data available")
         
-        # محاولات متعددة لجلب Volume و Average Volume
-        volume = (
-            info.get('volume') or 
-            info.get('regularMarketVolume') or 
-            0
-        )
+        daily_series = data_daily["Time Series (Daily)"]
+        latest_date = max(daily_series.keys())
+        latest = daily_series[latest_date]
+        prev_date = sorted(daily_series.keys())[-2]
+        prev = daily_series[prev_date]
         
-        # محاولة بديلة من history اليومي إذا فشل info
-        if volume == 0:
-            try:
-                hist_today = ticker.history(period="1d", interval="1d")
-                if not hist_today.empty:
-                    volume = hist_today['Volume'].iloc[-1]
-            except:
-                pass
+        current = float(latest['4. close'])
+        prev_close = float(prev['4. close'])
+        change_perc = round(((current - prev_close) / prev_close) * 100, 2)
+        volume = int(latest['5. volume'])
         
-        avg_volume = (
-            info.get('averageVolume') or 
-            info.get('averageDailyVolume10Day') or 
-            1  # تجنب القسمة على صفر
-        )
+        # Fetch global quote for average volume approximation (use 10-day if available, else estimate)
+        url_global = f"https://www.alphavantage.co/query?function=GLOBAL_QUOTE&symbol={symbol}&apikey={API_KEY}"
+        response_global = requests.get(url_global)
+        data_global = response_global.json()["Global Quote"]
+        
+        avg_volume = int(data_global.get('10. volume', volume))  # Fallback to today's volume if not available
         
         rel_volume = round(volume / avg_volume, 2) if avg_volume > 0 else 'N/A'
         
-        # حسابات إضافية
-        high52 = info.get('fiftyTwoWeekHigh', current)
+        # Fetch overview for market cap, beta, sector
+        url_overview = f"https://www.alphavantage.co/query?function=OVERVIEW&symbol={symbol}&apikey={API_KEY}"
+        response_overview = requests.get(url_overview)
+        overview = response_overview.json()
+        
+        market_cap = overview.get('MarketCapitalization', 'N/A')
+        if market_cap != 'N/A':
+            market_cap = round(int(market_cap) / 1e6, 1)
+        
+        beta = round(float(overview.get('Beta', 'N/A')), 2)
+        sector = overview.get('Sector', 'غير متوفر')
+        
+        # 52-week high/low from overview
+        high52 = float(overview.get('52WeekHigh', current))
         perc_from_high = round((current / high52 * 100), 1) if high52 > 0 else 'N/A'
         
-        # RSI بسيط (14 يوم)
+        # RSI from Alpha Vantage
+        url_rsi = f"https://www.alphavantage.co/query?function=RSI&symbol={symbol}&interval=daily&time_period=14&series_type=close&apikey={API_KEY}"
+        response_rsi = requests.get(url_rsi)
+        rsi_data = response_rsi.json().get("Technical Analysis: RSI", {})
         rsi = 'N/A'
-        try:
-            hist = ticker.history(period="1mo")
-            if not hist.empty:
-                delta = hist['Close'].diff()
-                gain = delta.where(delta > 0, 0).rolling(window=14).mean()
-                loss = -delta.where(delta < 0, 0).rolling(window=14).mean()
-                rs = gain / loss
-                rsi_val = 100 - (100 / (1 + rs.iloc[-1])) if rs.iloc[-1] != 0 else 50
-                rsi = round(rsi_val, 1)
-        except:
-            pass
+        if rsi_data:
+            latest_rsi_date = max(rsi_data.keys())
+            rsi = round(float(rsi_data[latest_rsi_date]['RSI']), 1)
         
-        data.append({
+        # Short % and Float approximation (Alpha Vantage doesn't have direct, fallback to overview or N/A)
+        short_perc = overview.get('ShortRatio', 'N/A')  # Approximate
+        float_m = overview.get('SharesFloat', 'N/A')
+        if float_m != 'N/A':
+            float_m = round(int(float_m) / 1e6, 2)
+        
+        return {
             'Symbol': symbol,
             'Price': round(current, 2),
-            'Change %': round(info.get('regularMarketChangePercent', 0) * 100, 2),
+            'Change %': change_perc,
             'Rel Volume': rel_volume,
             'Volume': volume,
             'Avg Vol': avg_volume,
-            'Market Cap (M)': round(info.get('marketCap', 0) / 1e6, 1) if info.get('marketCap') else 'N/A',
-            'Beta': round(info.get('beta', 'N/A'), 2),
+            'Market Cap (M)': market_cap,
+            'Beta': beta,
             '% from 52W High': perc_from_high,
             'RSI (14)': rsi,
-            'Sector': info.get('sector', 'غير متوفر'),
-            'Float (M)': round(info.get('floatShares', 0) / 1e6, 2) if info.get('floatShares') else 'N/A',
-            'Short %': round(info.get('shortPercentOfFloat', 0) * 100, 2) if info.get('shortPercentOfFloat') else 'N/A',
-        })
-        
-        status_text.text(f"جاري تحميل {symbol} ({i+1}/{len(stocks)})")
-        progress_bar.progress((i + 1) / len(stocks))
-        
+            'Sector': sector,
+            'Float (M)': float_m,
+            'Short %': short_perc,
+        }
+    
     except Exception as e:
-        status_text.warning(f"{symbol}: خطأ → تم تخطيه")
+        st.warning(f"خطأ في {symbol}: {str(e)}")
+        return None
+
+for i, symbol in enumerate(stocks):
+    stock_data = get_alpha_vantage_data(symbol)
+    if stock_data:
+        data.append(stock_data)
+    
+    status_text.text(f"جاري تحميل {symbol} ({i+1}/{len(stocks)})")
+    progress_bar.progress((i + 1) / len(stocks))
 
 progress_bar.empty()
 status_text.success("تم تحميل البيانات بنجاح!")
@@ -96,18 +116,17 @@ status_text.success("تم تحميل البيانات بنجاح!")
 if data:
     df = pd.DataFrame(data).sort_values('Change %', ascending=False)
     
-    # تنسيق الجدول الاحترافي
     styled_df = df.style.format({
         'Price': '{:.2f}',
         'Change %': '{:+.2f}%',
         'Rel Volume': '{:.2f}x' if isinstance(df['Rel Volume'].iloc[0], (int, float)) else '{}',
         'Volume': '{:,}',
         'Avg Vol': '{:,}',
-        'Market Cap (M)': '{:,.1f} M',
+        'Market Cap (M)': '{:,.1f} M' if isinstance(df['Market Cap (M)'].iloc[0], (int, float)) else '{}',
         'Beta': '{:.2f}',
         '% from 52W High': '{:.1f}%',
         'RSI (14)': '{:.1f}' if pd.notna(df['RSI (14)'].iloc[0]) else 'N/A',
-        'Short %': '{:.2f}%'
+        'Short %': '{:.2f}%' if isinstance(df['Short %'].iloc[0], (int, float)) else '{}'
     }).background_gradient(
         subset=['Change %'],
         cmap='RdYlGn'
@@ -124,7 +143,6 @@ if data:
     st.subheader("جدول المتابعة المتقدم")
     st.dataframe(styled_df, use_container_width=True, height=650)
     
-    # رسم بياني للتغيير
     col1, col2 = st.columns(2)
     
     with col1:
@@ -145,7 +163,7 @@ if data:
     
     st.success(f"آخر تحديث: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} | الأسهم الناجحة: {len(df)}")
     
-    st.info("ملاحظة: Relative Volume قد يظهر N/A مؤقتًا بسبب قيود مصدر البيانات (yfinance). يُفضل التحقق من مصادر أخرى للتداول الحقيقي.")
+    st.info("ملاحظة: البيانات من Alpha Vantage. قد يكون هناك تأخير في بعض البيانات.")
 else:
     st.error("تعذر جلب أي بيانات. تحقق من الاتصال أو الرموز.")
 
