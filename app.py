@@ -11,13 +11,13 @@ st.set_page_config(page_title="RUZGAR Financial Radar", page_icon="📈", layout
 st.title("📊 RUZGAR Financial Radar - Critical Minerals & Penny Stocks")
 st.markdown("**متابعة متقدمة لأسهم المعادن الحرجة و Penny Stocks** | يناير 2026")
 
-# قائمة الأسهم (أضفت ZENA كما في الجدول السابق)
+# قائمة الأسهم
 stocks = [
     'CRML', 'AREC', 'UAMY', 'UUUU', 'TMC', 'NB', 'TMQ', 'IDR', 'PPTA', 'MP', 'ERO',
     'LAC', 'ZENA', 'SGML', 'ABAT'
 ]
 
-# مفتاح Alpha Vantage (يمكن نقله لـ st.secrets لاحقًا)
+# مفتاح Alpha Vantage (يفضل نقله لاحقًا إلى st.secrets)
 API_KEY = "U2X2WAT360XR627R"
 
 @st.cache_data(ttl=300)  # كاش لمدة 5 دقائق
@@ -25,35 +25,51 @@ def get_stock_data(symbol):
     try:
         ticker = yf.Ticker(symbol)
         info = ticker.info
+
+        # ── حساب Change % بطريقة أكثر موثوقية ───────────────────────────────
+        hist = ticker.history(period="5d", interval="1d")
         
-        current = info.get('regularMarketPrice', info.get('currentPrice', 0)) or 0
-        volume = info.get('volume') or info.get('regularMarketVolume') or 0
+        if len(hist) >= 2:
+            prev_close = float(hist['Close'].iloc[-2])
+            current_price = float(hist['Close'].iloc[-1])
+            
+            # إذا كان آخر يوم تداول اليوم → نحاول نأخذ السعر الحالي إن وجد
+            if hist.index[-1].date() == datetime.now().date():
+                current_price = info.get('regularMarketPrice') or \
+                               info.get('currentPrice') or \
+                               current_price
+            
+            change_pct = ((current_price - prev_close) / prev_close) * 100 if prev_close > 0 else 0.0
+        else:
+            change_pct = 0.0
+            current_price = info.get('regularMarketPrice') or info.get('currentPrice') or 0.0
+
+        # الحجم
+        volume = int(hist['Volume'].iloc[-1]) if not hist.empty else 0
         
-        if volume == 0:
-            hist_today = ticker.history(period="1d")
-            if not hist_today.empty:
-                volume = hist_today['Volume'].iloc[-1]
+        avg_volume = info.get('averageVolume10days') or \
+                     info.get('averageVolume') or 1
         
-        avg_volume = info.get('averageVolume') or 1
         rel_volume = volume / avg_volume if avg_volume > 0 else float('nan')
-        
-        high52 = info.get('fiftyTwoWeekHigh', current) or current
-        perc_from_high = (current / high52 * 100) if high52 > 0 else float('nan')
-        
+
+        # باقي البيانات
+        high52 = info.get('fiftyTwoWeekHigh', current_price) or current_price
+        perc_from_high = (current_price / high52 * 100) if high52 > 0 else float('nan')
+
         rsi = float('nan')
         try:
-            hist = ticker.history(period="1mo")
-            if not hist.empty:
-                delta = hist['Close'].diff()
+            hist_rsi = ticker.history(period="1mo")
+            if not hist_rsi.empty:
+                delta = hist_rsi['Close'].diff()
                 gain = delta.where(delta > 0, 0).rolling(window=14).mean()
                 loss = -delta.where(delta < 0, 0).rolling(window=14).mean()
                 rs = gain / loss
                 rsi_val = 100 - (100 / (1 + rs.iloc[-1])) if rs.iloc[-1] != 0 else 50
-                rsi = rsi_val
+                rsi = float(rsi_val)
         except:
             pass
-        
-        # عدد الأخبار الحديثة من Alpha Vantage
+
+        # عدد الأخبار
         news_count = 0
         try:
             news_url = f"https://www.alphavantage.co/query?function=NEWS_SENTIMENT&tickers={symbol}&apikey={API_KEY}"
@@ -62,11 +78,11 @@ def get_stock_data(symbol):
             news_count = len(news_data.get('feed', []))
         except:
             pass
-        
+
         return {
             'Symbol': symbol,
-            'Price': current,
-            'Change %': info.get('regularMarketChangePercent', 0) * 100,
+            'Price': current_price,
+            'Change %': change_pct,
             'Rel Volume': rel_volume,
             'Volume': volume,
             'Avg Vol': avg_volume,
@@ -79,6 +95,7 @@ def get_stock_data(symbol):
             'Short %': info.get('shortPercentOfFloat', 0) * 100 if info.get('shortPercentOfFloat') else float('nan'),
             'News Count': news_count
         }
+
     except Exception as e:
         st.warning(f"خطأ في {symbol}: {str(e)}")
         return None
@@ -99,7 +116,7 @@ for i, symbol in enumerate(stocks):
 progress_bar.empty()
 status_text.success("تم تحميل البيانات بنجاح!")
 
-# زر التحديث اليدوي
+# زر التحديث
 if st.button("🔄 تحديث البيانات الآن"):
     st.cache_data.clear()
     st.rerun()
@@ -130,7 +147,7 @@ if data:
     
     # تنسيق الجدول
     styled_df = filtered_df.style.format(na_rep='N/A').format({
-        'Price': '{:.2f}',
+        'Price': '{:.4f}',
         'Change %': '{:+.2f}%',
         'Rel Volume': '{:.2f}x',
         'Volume': '{:,.0f}',
