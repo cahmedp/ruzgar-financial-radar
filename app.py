@@ -15,7 +15,8 @@ st.markdown("**متابعة متقدمة لأسهم المعادن الحرجة 
 stocks = [
     'CRML', 'AREC', 'UAMY', 'UUUU', 'TMC', 'NB', 'TMQ', 'IDR', 'PPTA', 'MP', 'ERO',
     'LAC', 'ZENA', 'SGML', 'ABAT','ASTS', 'RKLB', 'HIMS', 'QS', 'NBIS', 'SOFI', 'GRAB', 'TE', 'HOOD',
-    'NU', 'CLOV', 'ZETA', 'DLO', 'TSLA', 'PLTR', 'PGY', 'RIVN', 'SRTA', 'IREN', 'RDW', 'MAXQ', 'PNGAY'
+    'NU', 'CLOV', 'ZETA', 'DLO', 'TSLA', 'PLTR', 'PGY', 'RIVN', 'SRTA', 'IREN', 'RDW', 'MAXQ', 'PNGAY',
+    'NXPI'
 ]
 
 # مفتاح Alpha Vantage (يفضل نقله لاحقًا إلى st.secrets)
